@@ -153,14 +153,14 @@ func RestoreBuckets(db *DB, in *bytes.Reader) error {
 			writesCount++
 			fmt.Printf("%d     \r", totalCount)
 			if writesCount > txThreshold {
-				Commit(tx)
+				TxCommit(tx)
 				tx = WriteTx(db)
 				writesCount = 0
 				bucket = TxRawBucket(tx, generic.UnsafeString(bucketName))
 			}
 		default:
 			fmt.Println("Total restored items:", totalCount)
-			Commit(tx)
+			TxCommit(tx)
 			if reader.Error == io.EOF {
 				return nil
 			} else {

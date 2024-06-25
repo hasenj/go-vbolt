@@ -32,18 +32,56 @@ package:
 
 ## Database & Transactions
 
-These concepts are carried over from [BoltDB][bolt] as-is. The database is a single
-file, which you open during the initialization of your application.
+The database (DB) and transaction (Tx) are carried over from [BoltDB][bolt]
+as-is.
 
-When you want to perform a read operation, you create a Read Only Transaction.
-If you want to update data, you create a Read Write Transaction.
+The database is a single file, which you open during the initialization
+of your application.
 
-Write transactions are serialized, so you can only open one at a time.
+We provide a helper function that takes the filename and returns the DB handle.
+It panics if opening the database fails, for example, if another process is
+already using it.
 
-You **MUST** close the transaction when you are done with it. This includes
+```go
+vbolt.Open("mydata.bolt") *DB
+```
+
+If you want more control over the behavior, you can use the Open function from
+boltdb directly: import `"github.com/boltdb/bolt"` and call `bolt.Open(...)`
+
+Transactions are required to read or write data.
+
+As with the DB, we also provide some helper functions for opening and closing
+transactions.
+
+We provide some helper functions for those as well, although you can use the
+ones provided by boltdb directly.
+
+```go
+func ViewTx(db *DB) *Tx
+func WriteTx(db *DB) *Tx
+func TxClose(tx *Tx)
+func TxCommit(tx *Tx)
+
+func WithViewTx(db *DB, fn func(tx *Tx))
+func WithWriteTx(db *DB, fn func(tx *Tx))
+```
+
+The thing to notice about WithWriteTx is that it will rollback by default unless
+you explicitly commit inside the callback.
+
+Generally speaking you should not defer the Commit. Only commit at the end of
+the function after you've done all the writing you need. This ensures that if
+errors or panics occur half way through your function, nothing will be
+committed.
+
+Notes:
+
+- Write transactions are serialized, so you can only open one at a time.
+- You **MUST** close the transaction when you are done with it. This includes
 read-only transactions. Don't have long running transactions.
 
-## Binary Serializtion
+## Binary Serialization
 
 Binary serialization is provided via [VPack][vpack]. Refer to its documentation.
 Essentially, a serialization function takes a pointer to the object you want to
@@ -67,7 +105,7 @@ var Info vbolt.Info // define once
 
 // int => User
 // maps user id to user
-var UserBucket = vbolt.Bucket(&Info, "user", vpack.FInt, SerializeUser)
+var UserBucket = vbolt.Bucket(&Info, "user", vpack.FInt, PackUser)
 
 // int => []byte
 // maps userid to bcrypt hashed password
@@ -102,7 +140,7 @@ numeric order of the ids.
 Similarly, if you want to iterate on a bucket in order where the key is a
 string, use `vpack.StringZ` instead of `vpack.String`. The former uses c-style
 null terminated encoding for the strings, making it suitable for sorted
-iteartion, while the later places the length of the string (in varint encoding)
+iteration, while the later places the length of the string (in varint encoding)
 before the string, which while useful when encoding a string field as part of
 an object, does not have any particular advantage when used as the serialization
 function for the key of a bucket.
@@ -460,8 +498,8 @@ You have a few choices, but the most obvious are:
         Id int
         ...
     }
-    var A_Bucket = vbolt.Bucket(&info, "a", vpack.FInt, Serialize_A)
-    var B_Bucket = vbolt.Bucket(&info, "b", vpack.FInt, Serialize_B)
+    var A_Bucket = vbolt.Bucket(&info, "a", vpack.FInt, Pack_A)
+    var B_Bucket = vbolt.Bucket(&info, "b", vpack.FInt, Pack_B)
     var BtoA = vbolt.Index(&info, "b=>a", vpack.FInt, vpack.FInt)
 
     // when updating A
@@ -487,8 +525,8 @@ You have a few choices, but the most obvious are:
         ...
     }
 
-    var A_Bucket = vbolt.Bucket(&info, "a", vpack.FInt, Serialize_A)
-    var B_Bucket = vbolt.Bucket(&info, "b", vpack.FInt, Serialize_B)
+    var A_Bucket = vbolt.Bucket(&info, "a", vpack.FInt, Pack_A)
+    var B_Bucket = vbolt.Bucket(&info, "b", vpack.FInt, Pack_B)
     var AtoB = vbolt.Index(&info, "b=>b", vpack.FInt, vpack.FInt)
 
     // when updating B
@@ -530,8 +568,8 @@ type Article struct {
     CategoryIds []int
 }
 
-var ArticleBucket = vbolt.Bucket(&info, "article", vpack.FInt, SerializeArticle)
-var CategoryBucket = vbolt.Bucket(&info, "category", vpack.FInt, SerializeArticle)
+var ArticleBucket = vbolt.Bucket(&info, "article", vpack.FInt, PackArticle)
+var CategoryBucket = vbolt.Bucket(&info, "category", vpack.FInt, PackArticle)
 var CategoryArticles = vbolt.Index(&info, "cat=>art", vpack.FInt, vpack.FInt)
 
 // when saving an article
@@ -617,7 +655,7 @@ type ArticleSummary struct {
     ....
 }
 
-var ArticleSummaryBucket = vbolt.Bucket(&info, "article_summary", vpack.FInt, SerializeArticleSummary)
+var ArticleSummaryBucket = vbolt.Bucket(&info, "article_summary", vpack.FInt, PackArticleSummary)
 
 // when saving an article
 var summary = SummerizeArticle(article)
@@ -699,7 +737,6 @@ type C struct {
 }
 
 ```
-
 
 If you want to handle this kind of data layout through a relational database,
 you have to write additional code, often very complicated, to map your data back

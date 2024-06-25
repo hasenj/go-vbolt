@@ -7,17 +7,17 @@ import (
 
 type BucketInfo[K, T any] struct {
 	Name        string
-	KeyFn       vpack.SerializeFn[K]
-	SerializeFn vpack.SerializeFn[T]
+	KeyPackFn   vpack.PackFn[K]
+	ValuePackFn vpack.PackFn[T]
 }
 
-func Bucket[K, T any](dbInfo *Info, name string, keyFn vpack.SerializeFn[K], serFn vpack.SerializeFn[T]) *BucketInfo[K, T] {
+func Bucket[K, T any](dbInfo *Info, name string, keyFn vpack.PackFn[K], serFn vpack.PackFn[T]) *BucketInfo[K, T] {
 	generic.Append(&dbInfo.BucketList, name)
 	generic.EnsureMapNotNil(&dbInfo.Infos)
 	result := &BucketInfo[K, T]{
 		Name:        name,
-		KeyFn:       keyFn,
-		SerializeFn: serFn,
+		KeyPackFn:       keyFn,
+		ValuePackFn: serFn,
 	}
 	dbInfo.Infos[name] = result
 	return result
@@ -25,7 +25,7 @@ func Bucket[K, T any](dbInfo *Info, name string, keyFn vpack.SerializeFn[K], ser
 
 func HasKey[K, T any](tx *Tx, info *BucketInfo[K, T], id K) bool {
 	bkt := TxRawBucket(tx, info.Name)
-	return RawHasKey(bkt, vpack.ToBytes(&id, info.KeyFn))
+	return RawHasKey(bkt, vpack.ToBytes(&id, info.KeyPackFn))
 }
 
 func Read[K comparable, T any](tx *Tx, info *BucketInfo[K, T], id K, item *T) bool {
@@ -41,12 +41,12 @@ func _Read[K comparable, T any](bkt *BBucket, info *BucketInfo[K, T], id K, item
 	if id == zero {
 		return false
 	}
-	key := vpack.ToBytes(&id, info.KeyFn)
+	key := vpack.ToBytes(&id, info.KeyPackFn)
 	data := bkt.Get(key)
 	if data == nil {
 		return false
 	}
-	return vpack.FromBytesInto(data, item, info.SerializeFn)
+	return vpack.FromBytesInto(data, item, info.ValuePackFn)
 }
 
 // ReadSlice reads objects given by ids, appending them to the given slice.
@@ -113,14 +113,14 @@ func Write[K comparable, T any](tx *Tx, info *BucketInfo[K, T], id K, item *T) {
 		return
 	}
 	bkt := TxRawBucket(tx, info.Name)
-	key := vpack.ToBytes(&id, info.KeyFn)
-	data := vpack.ToBytes(item, info.SerializeFn)
+	key := vpack.ToBytes(&id, info.KeyPackFn)
+	data := vpack.ToBytes(item, info.ValuePackFn)
 	RawMustPut(bkt, key, data)
 }
 
 func Delete[K, T any](tx *Tx, info *BucketInfo[K, T], id K) {
 	bkt := TxRawBucket(tx, info.Name)
-	key := vpack.ToBytes(&id, info.KeyFn)
+	key := vpack.ToBytes(&id, info.KeyPackFn)
 	bkt.Delete(key)
 }
 
@@ -158,8 +158,8 @@ func _IterateCore[K, T any](bkt *BBucket, info *BucketInfo[K, T], direction _Ite
 	crsr := bkt.Cursor()
 	key, value := _CursorStartPos(crsr, direction)
 	for key != nil {
-		itemKey := vpack.FromBytes(key, info.KeyFn)
-		item := vpack.FromBytes(value, info.SerializeFn)
+		itemKey := vpack.FromBytes(key, info.KeyPackFn)
+		item := vpack.FromBytes(value, info.ValuePackFn)
 
 		if itemKey == nil || item == nil {
 			continue
@@ -198,13 +198,13 @@ func IterateInBatches[K, T any](tx *Tx, info *BucketInfo[K, T], batchSize int, v
 func ScanList[K, T any](tx *Tx, info *BucketInfo[K, T], startKey K, count int, items *[]T) (nextKey K, done bool) {
 	bkt := TxRawBucket(tx, info.Name)
 	crsr := bkt.Cursor()
-	key, value := crsr.Seek(vpack.ToBytes(&startKey, info.KeyFn))
+	key, value := crsr.Seek(vpack.ToBytes(&startKey, info.KeyPackFn))
 	for i := 0; i < count; i++ {
 		if key == nil { // end of bucket
 			break
 		}
 		var item T
-		if vpack.FromBytesInto(value, &item, info.SerializeFn) {
+		if vpack.FromBytesInto(value, &item, info.ValuePackFn) {
 			generic.Append(items, item)
 		} else {
 			continue
@@ -213,7 +213,7 @@ func ScanList[K, T any](tx *Tx, info *BucketInfo[K, T], startKey K, count int, i
 	}
 	done = key == nil
 	if !done {
-		vpack.FromBytesInto(key, &nextKey, info.KeyFn)
+		vpack.FromBytesInto(key, &nextKey, info.KeyPackFn)
 	}
 	return
 }

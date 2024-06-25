@@ -2,7 +2,6 @@ package vbolt
 
 import (
 	"log"
-	"sync/atomic"
 	"time"
 
 	"github.com/boltdb/bolt"
@@ -18,19 +17,13 @@ func Open(filename string) *DB {
 	var options bolt.Options
 	options.Timeout = time.Second
 	options.InitialMmapSize = 1024 * 1024 * 1024
-	options.MmapFlags = sysMmapFlags
 	return generic.Must(bolt.Open(filename, 0644, &options))
 }
-
-var txCount atomic.Int32
-var txWriteCount atomic.Int32
 
 func ViewTx(db *DB) *Tx {
 	if db == nil {
 		return nil
 	}
-
-	txCount.Add(1)
 	return generic.Must(db.Begin(false))
 }
 
@@ -38,25 +31,12 @@ func WriteTx(db *DB) *Tx {
 	if db == nil {
 		return nil
 	}
-
-	txCount.Add(1)
-	txWriteCount.Add(1)
-
-	txs := txWriteCount.Load()
-	if txs > 1 { // if 1 then it's just us
-		log.Println("Obtaining Write Tx; Open Tx Count:", txs)
-	}
 	return generic.Must(db.Begin(true))
 }
 
 func TxClose(tx *Tx) {
 	if tx == nil {
 		return
-	}
-
-	txCount.Add(-1)
-	if tx.Writable() {
-		txWriteCount.Add(-1)
 	}
 	tx.Rollback()
 }
@@ -76,13 +56,11 @@ func WithViewTx(db *DB, fn func(tx *Tx)) {
 	fn(tx)
 }
 
-func Commit(tx *Tx) error {
+func TxCommit(tx *Tx) {
 	if tx == nil {
-		return nil
+		return
 	}
-	err := tx.Commit()
-	TxClose(tx) // cleanup the open tx count stuff
-	return err
+	tx.Commit()
 }
 
 // WithWriteTx calls supplied function with a writeable transaction

@@ -41,82 +41,82 @@ const IndexCountPrefix byte = 0x03
 
 type IndexInfo[K, T comparable] struct {
 	Name     string
-	TargetFn vpack.SerializeFn[K]
-	TermFn   vpack.SerializeFn[T]
+	TargetPackFn vpack.PackFn[K]
+	TermPackFn   vpack.PackFn[T]
 }
 
-func Index[K, T comparable](dbInfo *Info, name string, termFn vpack.SerializeFn[T], targetFn vpack.SerializeFn[K]) *IndexInfo[K, T] {
+func Index[K, T comparable](dbInfo *Info, name string, termFn vpack.PackFn[T], targetFn vpack.PackFn[K]) *IndexInfo[K, T] {
 	generic.Append(&dbInfo.IndexList, name)
 	return &IndexInfo[K, T]{
 		Name:     name,
-		TargetFn: targetFn,
-		TermFn:   termFn,
+		TargetPackFn: targetFn,
+		TermPackFn:   termFn,
 	}
 }
 
 func termKeyPrefix[K, T comparable](info *IndexInfo[K, T], term *T) []byte {
 	buf := vpack.NewWriter()
 	buf.WriteBytes(IndexTermPrefix)
-	info.TermFn(term, buf)
+	info.TermPackFn(term, buf)
 	return buf.Data
 }
 
 func targetKeyPrefix[K, T comparable](info *IndexInfo[K, T], target *K) []byte {
 	buf := vpack.NewWriter()
 	buf.WriteBytes(IndexTargetPrefix)
-	info.TargetFn(target, buf)
+	info.TargetPackFn(target, buf)
 	return buf.Data
 }
 
 func termTargetKey[K, T comparable](info *IndexInfo[K, T], target *K, term *T, priority *uint16) []byte {
 	buf := vpack.NewWriter()
 	buf.WriteBytes(IndexTermPrefix)
-	info.TermFn(term, buf)
+	info.TermPackFn(term, buf)
 	vpack.FUInt16(priority, buf)
-	info.TargetFn(target, buf)
+	info.TargetPackFn(target, buf)
 	return buf.Data
 }
 
 func termCountKey[K, T comparable](info *IndexInfo[K, T], term *T) []byte {
 	buf := vpack.NewWriter()
 	buf.WriteBytes(IndexCountPrefix)
-	info.TermFn(term, buf)
+	info.TermPackFn(term, buf)
 	return buf.Data
 }
 
 func readTargetTerm[K, T comparable](info *IndexInfo[K, T], data []byte) (target K, term T) {
 	buf := vpack.NewReader(data)
 	buf.Pos++ // skip the IndexRevsrefix byte
-	info.TargetFn(&target, buf)
-	info.TermFn(&term, buf)
+	info.TargetPackFn(&target, buf)
+	info.TermPackFn(&term, buf)
 	return
 }
 
 func targetTermKey[K, T comparable](info *IndexInfo[K, T], target *K, term *T) []byte {
 	buf := vpack.NewWriter()
 	buf.WriteBytes(IndexTargetPrefix)
-	info.TargetFn(target, buf)
-	info.TermFn(term, buf)
+	info.TargetPackFn(target, buf)
+	info.TermPackFn(term, buf)
 	return buf.Data
 }
 
-var SerializeCountFn = vpack.Int
+var PackCountFn = vpack.Int
 
 func incTermCount[K, T comparable](tx *Tx, info *IndexInfo[K, T], term *T, increment int) {
 	key := termCountKey(info, term)
 	bkt := TxRawBucket(tx, info.Name)
 	v := bkt.Get(key)
 	var count int
-	vpack.FromBytesInto(v, &count, SerializeCountFn)
+	vpack.FromBytesInto(v, &count, PackCountFn)
 	count += increment
-	RawMustPut(bkt, key, vpack.ToBytes(&count, SerializeCountFn))
+	RawMustPut(bkt, key, vpack.ToBytes(&count, PackCountFn))
 }
 
 func ReadTermCount[K, T comparable](tx *Tx, info *IndexInfo[K, T], term *T, count *int) bool {
 	key := termCountKey(info, term)
 	bkt := TxRawBucket(tx, info.Name)
 	v := bkt.Get(key)
-	return vpack.FromBytesInto(v, count, SerializeCountFn)
+	return vpack.FromBytesInto(v, count, PackCountFn)
 }
 
 func addTargetTermPair[K, T comparable](tx *Tx, info *IndexInfo[K, T], target *K, term *T, priority *uint16) {
@@ -288,9 +288,9 @@ func IterateTarget[K, T comparable](tx *Tx, info *IndexInfo[K, T], target K, vis
 func readTermTargetPriority[K, T comparable](info *IndexInfo[K, T], data []byte) (term T, target K, priority uint16) {
 	buf := vpack.NewReader(data)
 	buf.Pos++ // skip the IndexTermPrefix byte
-	info.TermFn(&term, buf)
+	info.TermPackFn(&term, buf)
 	vpack.FUInt16(&priority, buf)
-	info.TargetFn(&target, buf)
+	info.TargetPackFn(&target, buf)
 	return
 }
 
