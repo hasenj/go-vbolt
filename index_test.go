@@ -66,7 +66,7 @@ func TestIndex(t *testing.T) {
 
 	// verify results
 
-	WithViewTx(db, func(tx *Tx) {
+	WithReadTx(db, func(tx *Tx) {
 		IterateAllTerms(tx, info, func(term string, target int, priority uint16) bool {
 			foundEntries[entry{term, target, priority}] = true
 			var count int

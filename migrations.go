@@ -34,7 +34,7 @@ func ApplyDBProcess(db *DB, name string, processFn func()) {
 	defer _takeTurns.Unlock()
 
 	shouldRun := false
-	WithViewTx(db, func(tx *Tx) {
+	WithReadTx(db, func(tx *Tx) {
 		var ts time.Time
 		shouldRun = !Read(tx, DBProcesses, name, &ts)
 	})

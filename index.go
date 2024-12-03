@@ -39,52 +39,59 @@ const IndexTermPrefix byte = 0x01
 const IndexTargetPrefix byte = 0x02
 const IndexCountPrefix byte = 0x03
 
-type IndexInfo[K, T comparable] struct {
+type IndexInfo[K, T, P comparable] struct {
 	Name     string
 	TargetPackFn vpack.PackFn[K]
 	TermPackFn   vpack.PackFn[T]
+	PriorityPackFn vpack.PackFn[P]
 }
 
-func Index[K, T comparable](dbInfo *Info, name string, termFn vpack.PackFn[T], targetFn vpack.PackFn[K]) *IndexInfo[K, T] {
+func Index[K, T comparable](dbInfo *Info, name string, termFn vpack.PackFn[T], targetFn vpack.PackFn[K]) *IndexInfo[K, T, uint16] {
+	return IndexExt(dbInfo, name, termFn, vpack.FUInt16, targetFn)
+}
+
+func IndexExt[K, T, P comparable](dbInfo *Info, name string, termFn vpack.PackFn[T], priorityFn vpack.PackFn[P], targetFn vpack.PackFn[K]) *IndexInfo[K, T, P] {
 	generic.Append(&dbInfo.IndexList, name)
-	return &IndexInfo[K, T]{
+	return &IndexInfo[K, T, P]{
 		Name:     name,
 		TargetPackFn: targetFn,
 		TermPackFn:   termFn,
+		PriorityPackFn: priorityFn,
 	}
 }
 
-func termKeyPrefix[K, T comparable](info *IndexInfo[K, T], term *T) []byte {
+
+func termKeyPrefix[K, T, P comparable](info *IndexInfo[K, T, P], term *T) []byte {
 	buf := vpack.NewWriter()
 	buf.WriteBytes(IndexTermPrefix)
 	info.TermPackFn(term, buf)
 	return buf.Data
 }
 
-func targetKeyPrefix[K, T comparable](info *IndexInfo[K, T], target *K) []byte {
+func targetKeyPrefix[K, T, P comparable](info *IndexInfo[K, T, P], target *K) []byte {
 	buf := vpack.NewWriter()
 	buf.WriteBytes(IndexTargetPrefix)
 	info.TargetPackFn(target, buf)
 	return buf.Data
 }
 
-func termTargetKey[K, T comparable](info *IndexInfo[K, T], target *K, term *T, priority *uint16) []byte {
+func termTargetKey[K, T, P comparable](info *IndexInfo[K, T, P], target *K, term *T, priority *P) []byte {
 	buf := vpack.NewWriter()
 	buf.WriteBytes(IndexTermPrefix)
 	info.TermPackFn(term, buf)
-	vpack.FUInt16(priority, buf)
+	info.PriorityPackFn(priority, buf)
 	info.TargetPackFn(target, buf)
 	return buf.Data
 }
 
-func termCountKey[K, T comparable](info *IndexInfo[K, T], term *T) []byte {
+func termCountKey[K, T, P comparable](info *IndexInfo[K, T, P], term *T) []byte {
 	buf := vpack.NewWriter()
 	buf.WriteBytes(IndexCountPrefix)
 	info.TermPackFn(term, buf)
 	return buf.Data
 }
 
-func readTargetTerm[K, T comparable](info *IndexInfo[K, T], data []byte) (target K, term T) {
+func readTargetTerm[K, T, P comparable](info *IndexInfo[K, T, P], data []byte) (target K, term T) {
 	buf := vpack.NewReader(data)
 	buf.Pos++ // skip the IndexRevsrefix byte
 	info.TargetPackFn(&target, buf)
@@ -92,7 +99,7 @@ func readTargetTerm[K, T comparable](info *IndexInfo[K, T], data []byte) (target
 	return
 }
 
-func targetTermKey[K, T comparable](info *IndexInfo[K, T], target *K, term *T) []byte {
+func targetTermKey[K, T, P comparable](info *IndexInfo[K, T, P], target *K, term *T) []byte {
 	buf := vpack.NewWriter()
 	buf.WriteBytes(IndexTargetPrefix)
 	info.TargetPackFn(target, buf)
@@ -102,7 +109,7 @@ func targetTermKey[K, T comparable](info *IndexInfo[K, T], target *K, term *T) [
 
 var PackCountFn = vpack.Int
 
-func incTermCount[K, T comparable](tx *Tx, info *IndexInfo[K, T], term *T, increment int) {
+func incTermCount[K, T, P comparable](tx *Tx, info *IndexInfo[K, T, P], term *T, increment int) {
 	key := termCountKey(info, term)
 	bkt := TxRawBucket(tx, info.Name)
 	v := bkt.Get(key)
@@ -112,32 +119,33 @@ func incTermCount[K, T comparable](tx *Tx, info *IndexInfo[K, T], term *T, incre
 	RawMustPut(bkt, key, vpack.ToBytes(&count, PackCountFn))
 }
 
-func ReadTermCount[K, T comparable](tx *Tx, info *IndexInfo[K, T], term *T, count *int) bool {
+func ReadTermCount[K, T, P comparable](tx *Tx, info *IndexInfo[K, T, P], term *T, count *int) bool {
 	key := termCountKey(info, term)
 	bkt := TxRawBucket(tx, info.Name)
 	v := bkt.Get(key)
 	return vpack.FromBytesInto(v, count, PackCountFn)
 }
 
-func addTargetTermPair[K, T comparable](tx *Tx, info *IndexInfo[K, T], target *K, term *T, priority *uint16) {
-	val := vpack.ToBytes(priority, vpack.FUInt16)
+func addTargetTermPair[K, T, P comparable](tx *Tx, info *IndexInfo[K, T, P], target *K, term *T, priority *P) {
+	val := vpack.ToBytes(priority, info.PriorityPackFn)
 	bkt := TxRawBucket(tx, info.Name)
 	bkt.Put(termTargetKey(info, target, term, priority), nil)
 	bkt.Put(targetTermKey(info, target, term), val)
 }
 
-func delTargetTermPair[K, T comparable](tx *Tx, info *IndexInfo[K, T], target *K, term *T, priority *uint16) {
+func delTargetTermPair[K, T, P comparable](tx *Tx, info *IndexInfo[K, T, P], target *K, term *T, priority *P) {
 	targetTermKey := targetTermKey(info, target, term)
 	bkt := TxRawBucket(tx, info.Name)
 	bkt.Delete(termTargetKey(info, target, term, priority))
 	bkt.Delete(targetTermKey)
 }
 
-func PlainTerms[T comparable](terms []T) map[T]uint16 {
-	return UniformTerms(terms, 0)
+func _PlainTerms[T, P comparable](terms []T) map[T]P {
+	var zero P
+	return UniformTerms(terms, zero)
 }
 
-func UniformTerms[T comparable](terms []T, priority uint16) (out map[T]uint16) {
+func UniformTerms[T, P comparable](terms []T, priority P) (out map[T]P) {
 	generic.InitMap(&out)
 	for _, t := range terms {
 		out[t] = priority
@@ -145,36 +153,41 @@ func UniformTerms[T comparable](terms []T, priority uint16) (out map[T]uint16) {
 	return
 }
 
-func SetTargetSingleTerm[K, T comparable](tx *Tx, info *IndexInfo[K, T], target K, term T) {
-	SetTargetTerms(tx, info, target, PlainTerms([]T{term}))
+func SetTargetSingleTerm[K, T, P comparable](tx *Tx, info *IndexInfo[K, T, P], target K, term T) {
+	SetTargetTerms(tx, info, target, _PlainTerms[T, P]([]T{term}))
 }
 
-func DeleteTargetTerms[K, T comparable](tx *Tx, info *IndexInfo[K, T], target K) {
+func SetTargetSingleTermExt[K, T, P comparable](tx *Tx, info *IndexInfo[K, T, P], target K, priority P, term T) {
+	SetTargetTerms(tx, info, target, UniformTerms([]T{term}, priority))
+}
+
+
+func DeleteTargetTerms[K, T, P comparable](tx *Tx, info *IndexInfo[K, T, P], target K) {
 	SetTargetTerms(tx, info, target, nil)
 }
 
 // sets terms without priorities
-func SetTargetTermsPlain[K, T comparable](tx *Tx, info *IndexInfo[K, T], target K, terms []T) {
-	SetTargetTerms(tx, info, target, PlainTerms(terms))
+func SetTargetTermsPlain[K, T, P comparable](tx *Tx, info *IndexInfo[K, T, P], target K, terms []T) {
+	SetTargetTerms(tx, info, target, _PlainTerms[T, P](terms))
 }
 
-func SetTargetTermsUniform[K, T comparable](tx *Tx, info *IndexInfo[K, T], target K, terms []T, priority uint16) {
+func SetTargetTermsUniform[K, T, P comparable](tx *Tx, info *IndexInfo[K, T, P], target K, terms []T, priority P) {
 	SetTargetTerms(tx, info, target, UniformTerms(terms, priority))
 }
 
 // Updates target,term pairs so that only the terms provided here point to target.
 // terms map the term to the priority
-func SetTargetTerms[K, T comparable](tx *Tx, info *IndexInfo[K, T], target K, terms map[T]uint16) {
-	var existing = make(map[T]uint16)
+func SetTargetTerms[K, T, P comparable](tx *Tx, info *IndexInfo[K, T, P], target K, terms map[T]P) {
+	var existing = make(map[T]P)
 
 	// read out the list of existing index terms so we can get the list of actual bucket keys to add / remove
-	IterateTarget(tx, info, target, func(term T, priority uint16) bool {
+	IterateTarget(tx, info, target, func(term T, priority P) bool {
 		existing[term] = priority
 		return true
 	})
 
-	var add = make(map[T]uint16)
-	var del = make(map[T]uint16)
+	var add = make(map[T]P)
+	var del = make(map[T]P)
 
 	for e, priority := range existing {
 		newPriority, isRequested := terms[e]
@@ -201,23 +214,23 @@ func SetTargetTerms[K, T comparable](tx *Tx, info *IndexInfo[K, T], target K, te
 	}
 }
 
-func IterateTerm[K, T comparable](tx *Tx, info *IndexInfo[K, T], term T, visitFn func(target K, priority uint16) bool) []byte {
+func IterateTerm[K, T, P comparable](tx *Tx, info *IndexInfo[K, T, P], term T, visitFn func(target K, priority P) bool) []byte {
 	return _IterateTermCore(tx, info, term, Window{}, visitFn)
 }
 
-func IterateTermOffset[K, T comparable](tx *Tx, info *IndexInfo[K, T], term T, offset int, visitFn func(target K, priority uint16) bool) []byte {
+func IterateTermOffset[K, T, P comparable](tx *Tx, info *IndexInfo[K, T, P], term T, offset int, visitFn func(target K, priority P) bool) []byte {
 	options := Window{Offset: offset}
 	return _IterateTermCore(tx, info, term, options, visitFn)
 }
 
-func ReadTermTargets[K, T comparable](tx *Tx, info *IndexInfo[K, T], term T, targets *[]K, window Window) []byte {
-	return _IterateTermCore(tx, info, term, window, func(target K, priority uint16) bool {
+func ReadTermTargets[K, T, P comparable](tx *Tx, info *IndexInfo[K, T, P], term T, targets *[]K, window Window) []byte {
+	return _IterateTermCore(tx, info, term, window, func(target K, priority P) bool {
 		generic.Append(targets, target)
 		return true
 	})
 }
 
-func ReadTermTargetSingle[K, T comparable](tx *Tx, info *IndexInfo[K, T], term T, target *K) bool {
+func ReadTermTargetSingle[K, T, P comparable](tx *Tx, info *IndexInfo[K, T, P], term T, target *K) bool {
 	var targets []K
 	var opts Window
 	opts.Limit = 1
@@ -238,7 +251,7 @@ type Window struct {
 }
 
 // iterate over targets that are assigned to term
-func _IterateTermCore[K, T comparable](tx *Tx, info *IndexInfo[K, T], term T, window Window, visitFn func(target K, priority uint16) bool) []byte {
+func _IterateTermCore[K, T, P comparable](tx *Tx, info *IndexInfo[K, T, P], term T, window Window, visitFn func(target K, priority P) bool) []byte {
 	keyPrefix := termKeyPrefix(info, &term)
 
 	if window.StartByte != nil {
@@ -271,30 +284,30 @@ func _IterateTermCore[K, T comparable](tx *Tx, info *IndexInfo[K, T], term T, wi
 }
 
 // iterate over terms that are assigned to target
-func IterateTarget[K, T comparable](tx *Tx, info *IndexInfo[K, T], target K, visitFn func(term T, priority uint16) bool) {
+func IterateTarget[K, T, P comparable](tx *Tx, info *IndexInfo[K, T, P], target K, visitFn func(term T, priority P) bool) {
 	keyPrefix := targetKeyPrefix(info, &target)
 	bkt := TxRawBucket(tx, info.Name)
 
 	RawIterateKeyPrefixData(bkt.Cursor(), keyPrefix, func(key []byte, v []byte) bool {
 		// we can safely assume the key starts with IndexTermPrefix because otherwise the RawIterateKeyPrefixValues func will not call us
 		target, term := readTargetTerm(info, key)
-		var priority uint16
-		vpack.FromBytesInto(v, &priority, vpack.FUInt16)
+		var priority P
+		vpack.FromBytesInto(v, &priority, info.PriorityPackFn)
 		_ = target
 		return visitFn(term, priority)
 	})
 }
 
-func readTermTargetPriority[K, T comparable](info *IndexInfo[K, T], data []byte) (term T, target K, priority uint16) {
+func readTermTargetPriority[K, T, P comparable](info *IndexInfo[K, T, P], data []byte) (term T, target K, priority P) {
 	buf := vpack.NewReader(data)
 	buf.Pos++ // skip the IndexTermPrefix byte
 	info.TermPackFn(&term, buf)
-	vpack.FUInt16(&priority, buf)
+	info.PriorityPackFn(&priority, buf)
 	info.TargetPackFn(&target, buf)
 	return
 }
 
-func IterateAllTerms[K, T comparable](tx *Tx, info *IndexInfo[K, T], visitFn func(term T, target K, priority uint16) bool) {
+func IterateAllTerms[K, T, P comparable](tx *Tx, info *IndexInfo[K, T, P], visitFn func(term T, target K, priority P) bool) {
 	var keyPrefix = []byte{IndexTermPrefix}
 	bkt := TxRawBucket(tx, info.Name)
 

@@ -20,7 +20,7 @@ func Open(filename string) *DB {
 	return generic.Must(bolt.Open(filename, 0644, &options))
 }
 
-func ViewTx(db *DB) *Tx {
+func ReadTx(db *DB) *Tx {
 	if db == nil {
 		return nil
 	}
@@ -50,8 +50,8 @@ func TxRawBucket(tx *Tx, name string) *BBucket {
 	return bkt
 }
 
-func WithViewTx(db *DB, fn func(tx *Tx)) {
-	tx := ViewTx(db)
+func WithReadTx(db *DB, fn func(tx *Tx)) {
+	tx := ReadTx(db)
 	defer TxClose(tx)
 	fn(tx)
 }
@@ -75,6 +75,7 @@ func WithWriteTx(db *DB, fn func(tx *Tx)) {
 type Info struct {
 	BucketList []string
 	IndexList  []string
+	CollectionList []string
 
 	Infos map[string]any
 }
@@ -85,6 +86,9 @@ func EnsureBuckets(tx *Tx, dbInfo *Info) {
 		TxRawBucket(tx, name)
 	}
 	for _, name := range dbInfo.IndexList {
+		TxRawBucket(tx, name)
+	}
+	for _, name := range dbInfo.CollectionList {
 		TxRawBucket(tx, name)
 	}
 }

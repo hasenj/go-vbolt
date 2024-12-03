@@ -93,7 +93,7 @@ func _BackupReadBuffer(reader *_BackupReader) []byte {
 }
 
 func BackupBuckets(db *DB, out *bufio.Writer, bucketNames ...string) error {
-	tx := ViewTx(db)
+	tx := ReadTx(db)
 	defer TxClose(tx)
 
 	var backup _BackupBuilder
@@ -173,7 +173,7 @@ func RestoreBuckets(db *DB, in *bytes.Reader) error {
 }
 
 func DumpBucketJSON[K, V any](db *DB, out *bufio.Writer, label string, bucket *BucketInfo[K, V]) {
-	tx := ViewTx(db)
+	tx := ReadTx(db)
 	defer TxClose(tx)
 	enc := json.NewEncoder(out)
 	IterateAll(tx, bucket, func(key K, value V) bool {

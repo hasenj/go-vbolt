@@ -1,9 +1,12 @@
 package vbolt
 
 import (
+	"bytes"
+
 	"go.hasen.dev/generic"
 	"go.hasen.dev/vpack"
 )
+
 
 type BucketInfo[K, T any] struct {
 	Name        string
@@ -144,6 +147,36 @@ func _CursorStartPos(c *Cursor, direction _IterationDirection) (k []byte, v []by
 	return
 }
 
+func _CursorStartPosForPrefix(c *Cursor, prefix []byte, direction _IterationDirection) (k []byte, v []byte) {
+	if len(prefix) == 0 {
+		return _CursorStartPos(c, direction)
+	}
+	if direction == _IterateRegular {
+		return c.Seek(prefix)
+	}
+	if direction == _IterateReverse {
+		// find the last item that could have this prefix
+		next := _NextPrefix(prefix)
+		c.Seek(next)
+		return c.Prev()
+	}
+	return
+}
+
+func _NextPrefix(b []byte) []byte {
+	// find the index of the last byte that is < 0xff
+	var i = len(b) - 1;
+	for ; i >= 0 && b[i] == 255; i-- {}
+
+	if i >= 0 {
+		next := bytes.Clone(b)
+		next[i] += 1
+		return next
+	} else {
+		return nil
+	}
+}
+
 func _CursorStep(c *Cursor, direction _IterationDirection) (k []byte, v []byte) {
 	if direction == _IterateRegular {
 		return c.Next()
@@ -152,6 +185,18 @@ func _CursorStep(c *Cursor, direction _IterationDirection) (k []byte, v []byte) 
 		return c.Prev()
 	}
 	return
+}
+
+// TODO: accept a "start at key" parameter
+func _RawIterateCore(bkt *BBucket, prefix []byte, direction _IterationDirection, visitFn func(key []byte, value []byte) bool) {
+	crsr := bkt.Cursor()
+	key, value := _CursorStartPosForPrefix(crsr, prefix, direction)
+	for key != nil && bytes.HasPrefix(key, prefix) {
+		if !visitFn(key, value) {
+			break
+		}
+		key, value = _CursorStep(crsr, direction)
+	}
 }
 
 func _IterateCore[K, T any](bkt *BBucket, info *BucketInfo[K, T], direction _IterationDirection, visitFn func(key K, item T) bool) {
@@ -206,8 +251,6 @@ func ScanList[K, T any](tx *Tx, info *BucketInfo[K, T], startKey K, count int, i
 		var item T
 		if vpack.FromBytesInto(value, &item, info.ValuePackFn) {
 			generic.Append(items, item)
-		} else {
-			continue
 		}
 		key, value = crsr.Next()
 	}
@@ -216,4 +259,27 @@ func ScanList[K, T any](tx *Tx, info *BucketInfo[K, T], startKey K, count int, i
 		vpack.FromBytesInto(key, &nextKey, info.KeyPackFn)
 	}
 	return
+}
+
+func IterateBucketFrom[K, T any](tx *Tx, info *BucketInfo[K, T], startKey K, visitFn func(key K, value T) bool) {
+	bkt := TxRawBucket(tx, info.Name)
+	crsr := bkt.Cursor()
+	keyPrefix := vpack.ToBytes(&startKey, info.KeyPackFn)
+	bKey, bValue := crsr.Seek(keyPrefix)
+	for bKey != nil {
+		var key K
+		var value T
+		var cont bool
+		if vpack.FromBytesInto(bValue, &value, info.ValuePackFn) &&
+			vpack.FromBytesInto(bKey, &key, info.KeyPackFn) {
+			cont = visitFn(key, value)
+		} else {
+			// should not happen, but if it did, ignore it and move on
+			cont = true
+		}
+		if !cont {
+			return
+		}
+		bKey, bValue = crsr.Next()
+	}
 }

@@ -1,8 +1,6 @@
 package vbolt
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
 	"reflect"
 
@@ -10,13 +8,6 @@ import (
 	"go.hasen.dev/vpack"
 )
 
-func JSONify(obj any) string {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetIndent("", "")
-	b, _ := json.Marshal(obj)
-	return string(b)
-}
 
 type GenericItem struct {
 	Key   any
@@ -96,8 +87,8 @@ func DEBUGInspect[K, V any](tx *Tx, bucket *BucketInfo[K, V]) {
 	inspection.Limit = 1000
 	GenericRead(tx, &inspection)
 	for _, item := range inspection.Items {
-		fmt.Println(JSONify(item.Key))
-		fmt.Println(JSONify(item.Value))
+		fmt.Println(generic.JSONify(item.Key, ""))
+		fmt.Println(generic.JSONify(item.Value, ""))
 	}
 	fmt.Println("Total Count:", inspection.TotalItemsCount)
 }

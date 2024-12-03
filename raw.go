@@ -9,15 +9,6 @@ import (
 
 // Core helper functions that buckets and indecies are built on top of
 
-// Put a new entry, returning false if the key already exists in bucket
-func RawPutNew(bkt *BBucket, key []byte, value []byte) bool {
-	if RawHasKey(bkt, key) {
-		return false
-	}
-	RawMustPut(bkt, key, value)
-	return true
-}
-
 func RawHasKey(bkt *BBucket, key []byte) bool {
 	if bkt == nil {
 		return false

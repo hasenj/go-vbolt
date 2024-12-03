@@ -2,9 +2,8 @@
 
 VBolt is a data persistance and retrieval system.
 
-It's thin layer on top of [BoltDB][bolt], that turns it from a raw byte buffer
-based key-value store, into a robust storage engine that provides indexing
-capabilities.
+It's thin layer on top of [BoltDB][bolt], that turns it from a raw key-value
+store into a versatile storage engine with indexing capabilities.
 
 It's only a few hundred lines of code, compared to bolt itself, which is about
 4000 lines (excluding comments, whitespace, and tests).
@@ -35,6 +34,8 @@ package:
 The database (DB) and transaction (Tx) are carried over from [BoltDB][bolt]
 as-is.
 
+### Database
+
 The database is a single file, which you open during the initialization
 of your application.
 
@@ -43,43 +44,78 @@ It panics if opening the database fails, for example, if another process is
 already using it.
 
 ```go
-vbolt.Open("mydata.bolt") *DB
+vbolt.Open(filename string) *DB
+```
+
+The expected usage patter is that you will have a global variable that will get
+initialized at some point during the initialization process of the application.
+
+```go
+var db *vbolt.DB
+
+....
+
+func initDB(...) {
+	db = vbolt.Open(dbFilename)
+}
 ```
 
 If you want more control over the behavior, you can use the Open function from
 boltdb directly: import `"github.com/boltdb/bolt"` and call `bolt.Open(...)`
 
+### Transactions
+
 Transactions are required to read or write data.
 
-As with the DB, we also provide some helper functions for opening and closing
-transactions.
+As with the DB, you can use boltdb function directly to obtain a transaction,
+but we provide some helper functions for doing that.
 
-We provide some helper functions for those as well, although you can use the
-ones provided by boltdb directly.
+The main difference is our API is structured as functions, not methods bound to
+a type.
 
 ```go
-func ViewTx(db *DB) *Tx
+func ReadTx(db *DB) *Tx
 func WriteTx(db *DB) *Tx
 func TxClose(tx *Tx)
 func TxCommit(tx *Tx)
+```
 
-func WithViewTx(db *DB, fn func(tx *Tx))
+If you use `ReadTx(db)` or `WriteTx(db)`, you must immediately add a defer
+statement to `TxClose(tx)`
+
+```go
+tx := ReadTx(db)
+defer TxClose(tx)
+```
+
+```go
+tx := WriteTx(db)
+defer TxClose(tx)
+```
+
+Generally speaking, when using a `WriteTx`, you should not `defer TxCommit`.
+Commit explicitly at the end of the function after you've done all the writing
+you need. This ensures that if you return early or a panics occur half way
+through your code, nothing will be committed.
+
+```go
+func WithReadTx(db *DB, fn func(tx *Tx))
 func WithWriteTx(db *DB, fn func(tx *Tx))
 ```
 
-The thing to notice about WithWriteTx is that it will rollback by default unless
-you explicitly commit inside the callback.
+We also provide some helpers to automatically close the transaction. The only
+"benefit" of these is so you don't have to worry about forgetting to `defer
+TxClose(tx)`
 
-Generally speaking you should not defer the Commit. Only commit at the end of
-the function after you've done all the writing you need. This ensures that if
-errors or panics occur half way through your function, nothing will be
-committed.
+Important: `WithWriteTx` does not auto commit at the end. You have to commit
+explicitly at the end of your own code.
+
 
 Notes:
 
 - Write transactions are serialized, so you can only open one at a time.
 - You **MUST** close the transaction when you are done with it. This includes
-read-only transactions. Don't have long running transactions.
+read-only transactions. DO NOT hold long running transactions.
 
 ## Binary Serialization
 
@@ -99,10 +135,6 @@ To use a bucket, you first have to declare it
 ```go
 var Info vbolt.Info // define once
 
-
-// declare the buckets your application wants to use
-
-
 // int => User
 // maps user id to user
 var UserBucket = vbolt.Bucket(&Info, "user", vpack.FInt, PackUser)
@@ -120,7 +152,7 @@ var UsernameBucket = vbolt.Bucket(&Info, "username", vpack.StringZ, vpack.Int)
 ```
 
 You declare your buckets by calling `vbolt.Bucket`. The return value is
-`*volt.BucketInfo`, which will be used for reading from the bucket and writing
+`*vbolt.BucketInfo`, which will be used for reading from the bucket and writing
 to it.
 
 Bucket declarations are bound to a `vbolt.Info` object for introspection
@@ -128,7 +160,31 @@ purposes.
 
 Unlike a regular `map` in Go, a bucket is not _just_ about mapping a key to
 value; it's primarily about persisting data to disk, so the `key` and `value`
-parameters are not given as _types_, but as _serialization functions_.
+parameters are not given as _types_, but as _packing functions_.
+
+The packing function _implies_ the type, so we don't need to provide it separately.
+
+In the example above:
+
+```go
+var UserBucket = vbolt.Bucket(&Info, "user", vpack.FInt, PackUser)
+```
+
+`PackUser` is a packing function compatible with `vpack.PackFn[User]`, in other words,
+it would look something like this:
+
+```go
+func PackUser(user *User, buf *vpack.Buffer) {
+	var version = vpack.Version(2)
+	vpack.Int(&user.Id, buf)
+	vpack.String(&user.Name, buf)
+	vpack.String(&user.Email, buf)
+	vpack.Bool(&user.IsAdmin, buf)
+	if version >= 2 {
+		vpack.Bool(&user.EmailVerified, buf)
+	}
+}
+```
 
 Since the underlying storage is a B-Tree, you might want to give some consideration regarding which serialization function you want to use for the key.
 
@@ -164,7 +220,11 @@ var user User
 vbolt.Read(tx, UserBucket, userId, &user)
 ```
 
-We provide helper functions to read a list of object ids into a slice or a map:
+Since the bucket has the packing functions for both keys and values, the Read
+function makes use of them to locate the data in the tree (using the key) and
+unpacking the data (from the value that maps to the key) into a user struct.
+
+We also provide helper functions to read a list of object ids into a slice or a map:
 
 ```go
 func ReadSlice[K comparable, T any](tx *Tx, info *BucketInfo[K, T], ids []K, list *[]T) int
@@ -197,7 +257,7 @@ To write to a bucket, you need a read-write transaction.
 func Write[K comparable, T any](tx *Tx, info *BucketInfo[K, T], id K, item *T)
 ```
 
-If `id` is the zero value for its type, nothing will be written. =
+If `id` is the zero value for its type, nothing will be written.
 
 Example usage:
 
@@ -222,7 +282,6 @@ They really _are_ exceptions, and it's not wise to litter your code with checks
 against those errors.
 
 Instead, you should write the code so that such "errors" never happen.
-
 
 All the conditions under which a write error occurs (other than OS level I/O
 errors) are avoidable programmer mistakes:
@@ -417,7 +476,7 @@ Example usage:
 ```go
 // assuming query.Cursor represents the query parameter "cursor" from the http request
 var startKey = base64.RawURLEncoding.DecodeString(query.Cursor)
-var window = volt.Window{ StartKey: startKey, Limit: 10 }
+var window = vbolt.Window{ StartKey: startKey, Limit: 10 }
 var pageNumbers = make([]int, 0, 10)
 var nextKey = vbolt.ReadTermTargets(tx, KeywordsIndex, query.Term, &pageNumbers, window)
 var nextCursor = base64.RawURLEncoding.EncodeToString(nextKey)
@@ -450,9 +509,9 @@ store in the index should be deriveable from the source object.
 
 The next section should clarify this point.
 
-# Modelling relationships
+# Modeling relationships
 
-## Modelling one to many relationships
+## Modeling one to many relationships
 
 Suppose an instance of type A refers to many instance of type B, such that it's
 not many-to-many. That is, if some instance `b0` of type B is referred to by an
@@ -470,13 +529,13 @@ You have a few choices, but the most obvious are:
 
   ```go
   type A struct {
-      Id int
-      ...
-      BList []B
+  	Id int
+  	...
+  	BList []B
   }
 
   type B struct {
-      ...
+  	...
   }
   ```
 
@@ -489,14 +548,14 @@ You have a few choices, but the most obvious are:
 
     ```go
     type A struct {
-        Id int
-        ...
-        B_Ids []int
+    	Id int
+    	...
+    	B_Ids []int
     }
 
     type B struct {
-        Id int
-        ...
+    	Id int
+    	...
     }
     var A_Bucket = vbolt.Bucket(&info, "a", vpack.FInt, Pack_A)
     var B_Bucket = vbolt.Bucket(&info, "b", vpack.FInt, Pack_B)
@@ -513,16 +572,17 @@ You have a few choices, but the most obvious are:
     ```
 
   - Bs refers to A, with an index to get from A to Bs
+
     ```go
     type A struct {
-        Id int
-        ...
+    	Id int
+    	...
     }
 
     type B struct {
-        Id int
-        A_Id int
-        ...
+    	Id int
+    	A_Id int
+    	...
     }
 
     var A_Bucket = vbolt.Bucket(&info, "a", vpack.FInt, Pack_A)
@@ -540,7 +600,7 @@ You have a few choices, but the most obvious are:
     vbolt.ReadSlice(tx, B_Bucket, bIds, &bList)
     ```
 
-## Modelling many to many relationships
+## Modeling many to many relationships
 
 For many to many relationships, both A and B refer to each other without limit,
 however, usually one of them will have fewer references than the other. For
@@ -557,15 +617,15 @@ In this case, the Article is the target and the Category is the term.
 
 ```go
 type Category struct {
-    Id int
-    Name string
-    ...
+	Id int
+	Name string
+	...
 }
 
 type Article struct {
-    Id name
-    ...
-    CategoryIds []int
+	Id name
+	...
+	CategoryIds []int
 }
 
 var ArticleBucket = vbolt.Bucket(&info, "article", vpack.FInt, PackArticle)
@@ -637,7 +697,7 @@ We could call a function to summerize each article at this point.
 ```go
 var summaries []ArticleSummary
 for _, article := range articles {
-    summaries = append(summaries, SummerizeArticle(article))
+	summaries = append(summaries, SummerizeArticle(article))
 }
 ```
 
@@ -651,8 +711,8 @@ summary.
 ```go
 // type and bucket definitions
 type ArticleSummary struct {
-    Id int // same as article id
-    ....
+	Id int // same as article id
+	....
 }
 
 var ArticleSummaryBucket = vbolt.Bucket(&info, "article_summary", vpack.FInt, PackArticleSummary)
@@ -719,21 +779,21 @@ the following:
 ```go
 
 type A struct {
-    ....
-    BItems []B
-    X_Ids  []uint64
+	....
+	BItems []B
+	X_Ids  []uint64
 
 }
 
 type B struct {
-    ....
-    CItems []C
-    Y_Ids  []uint64
+	....
+	CItems []C
+	Y_Ids  []uint64
 }
 
 type C struct {
-    .....
-    Z_Ids []uint64
+	.....
+	Z_Ids []uint64
 }
 
 ```
