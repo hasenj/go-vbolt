@@ -1,6 +1,8 @@
 package vbolt
 
 import (
+	"bytes"
+	"math/rand"
 	"os"
 	"testing"
 
@@ -107,5 +109,36 @@ func TestIndex(t *testing.T) {
 	if len(foundEntries) != len(expectedEntries) {
 		t.Logf("Found entries and expected entries don't match! %d != %d", len(foundEntries), len(expectedEntries))
 		t.Fail()
+	}
+}
+
+func randomBytes(n int) []byte {
+	b := make([]byte, n)
+	for i := range b {
+		b[i] = byte(rand.Intn(256))
+	}
+	return b
+}
+
+func TestNextPrefix(t *testing.T) {
+	testValues := [][]byte{
+		// just some random values
+		{},
+		{0},
+		randomBytes(1), randomBytes(2), randomBytes(2),
+		{255},
+		{255, 255},
+		randomBytes(3), randomBytes(3), randomBytes(3), randomBytes(3),
+		randomBytes(8), randomBytes(8), randomBytes(8), randomBytes(8),
+		randomBytes(10), randomBytes(10), randomBytes(10),
+		{255, 255, 255, 255, 255, 255},
+	}
+
+	for _, v := range testValues {
+		next := _NextPrefix(v)
+		if bytes.Compare(next, v) <= 0 {
+			t.Logf("Next prefix of %x <= %x", next, v)
+			t.Fail()
+		}
 	}
 }

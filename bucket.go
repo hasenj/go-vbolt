@@ -1,12 +1,9 @@
 package vbolt
 
 import (
-	"bytes"
-
 	"go.hasen.dev/generic"
 	"go.hasen.dev/vpack"
 )
-
 
 type BucketInfo[K, T any] struct {
 	Name        string
@@ -19,24 +16,24 @@ func Bucket[K, T any](dbInfo *Info, name string, keyFn vpack.PackFn[K], serFn vp
 	generic.EnsureMapNotNil(&dbInfo.Infos)
 	result := &BucketInfo[K, T]{
 		Name:        name,
-		KeyPackFn:       keyFn,
+		KeyPackFn:   keyFn,
 		ValuePackFn: serFn,
 	}
 	dbInfo.Infos[name] = result
 	return result
 }
 
-func HasKey[K, T any](tx *Tx, info *BucketInfo[K, T], id K) bool {
-	bkt := TxRawBucket(tx, info.Name)
-	return RawHasKey(bkt, vpack.ToBytes(&id, info.KeyPackFn))
+func HasKey[K, T any](tx *Tx, bucketInfo *BucketInfo[K, T], id K) bool {
+	bkt := TxRawBucket(tx, bucketInfo.Name)
+	return RawHasKey(bkt, vpack.ToBytes(&id, bucketInfo.KeyPackFn))
 }
 
-func Read[K comparable, T any](tx *Tx, info *BucketInfo[K, T], id K, item *T) bool {
-	bkt := TxRawBucket(tx, info.Name)
-	return _Read(bkt, info, id, item)
+func Read[K comparable, T any](tx *Tx, bucketInfo *BucketInfo[K, T], id K, item *T) bool {
+	bkt := TxRawBucket(tx, bucketInfo.Name)
+	return _Read(bkt, bucketInfo, id, item)
 }
 
-func _Read[K comparable, T any](bkt *BBucket, info *BucketInfo[K, T], id K, item *T) bool {
+func _Read[K comparable, T any](bkt *BBucket, bucketInfo *BucketInfo[K, T], id K, item *T) bool {
 	if bkt == nil {
 		return false
 	}
@@ -44,25 +41,25 @@ func _Read[K comparable, T any](bkt *BBucket, info *BucketInfo[K, T], id K, item
 	if id == zero {
 		return false
 	}
-	key := vpack.ToBytes(&id, info.KeyPackFn)
+	key := vpack.ToBytes(&id, bucketInfo.KeyPackFn)
 	data := bkt.Get(key)
 	if data == nil {
 		return false
 	}
-	return vpack.FromBytesInto(data, item, info.ValuePackFn)
+	return vpack.FromBytesInto(data, item, bucketInfo.ValuePackFn)
 }
 
 // ReadSlice reads objects given by ids, appending them to the given slice.
 // returns the number of objects that were successfully read
-func ReadSlice[K comparable, T any](tx *Tx, info *BucketInfo[K, T], ids []K, list *[]T) int {
-	bkt := TxRawBucket(tx, info.Name)
+func ReadSlice[K comparable, T any](tx *Tx, bucketInfo *BucketInfo[K, T], ids []K, list *[]T) int {
+	bkt := TxRawBucket(tx, bucketInfo.Name)
 	if bkt == nil {
 		return 0
 	}
 	count := 0
 	for _, id := range ids {
 		var item T
-		if _Read(bkt, info, id, &item) {
+		if _Read(bkt, bucketInfo, id, &item) {
 			generic.Append(list, item)
 			count++
 		}
@@ -72,15 +69,15 @@ func ReadSlice[K comparable, T any](tx *Tx, info *BucketInfo[K, T], ids []K, lis
 
 // ReadSliceToMap reads objects given by id into the given map.
 // returns the number of objects that were successfully read
-func ReadSliceToMap[K comparable, T any](tx *Tx, info *BucketInfo[K, T], ids []K, itemsMap map[K]T) int {
-	bkt := TxRawBucket(tx, info.Name)
+func ReadSliceToMap[K comparable, T any](tx *Tx, bucketInfo *BucketInfo[K, T], ids []K, itemsMap map[K]T) int {
+	bkt := TxRawBucket(tx, bucketInfo.Name)
 	if bkt == nil {
 		return 0
 	}
 	count := 0
 	for _, id := range ids {
 		var item T
-		if _Read(bkt, info, id, &item) {
+		if _Read(bkt, bucketInfo, id, &item) {
 			itemsMap[id] = item
 			count++
 		}
@@ -89,9 +86,9 @@ func ReadSliceToMap[K comparable, T any](tx *Tx, info *BucketInfo[K, T], ids []K
 }
 
 // like read slice but for reading one item and appending it to a list
-func ReadAppend[K comparable, T any](tx *Tx, info *BucketInfo[K, T], id K, list *[]T) bool {
+func ReadAppend[K comparable, T any](tx *Tx, bucketInfo *BucketInfo[K, T], id K, list *[]T) bool {
 	var item T
-	if Read(tx, info, id, &item) {
+	if Read(tx, bucketInfo, id, &item) {
 		generic.Append(list, item)
 		return true
 	} else {
@@ -99,9 +96,9 @@ func ReadAppend[K comparable, T any](tx *Tx, info *BucketInfo[K, T], id K, list 
 	}
 }
 
-func ReadToMap[K comparable, T any](tx *Tx, info *BucketInfo[K, T], id K, itemsMap map[K]T) bool {
+func ReadToMap[K comparable, T any](tx *Tx, bucketInfo *BucketInfo[K, T], id K, itemsMap map[K]T) bool {
 	var item T
-	if Read(tx, info, id, &item) {
+	if Read(tx, bucketInfo, id, &item) {
 		itemsMap[id] = item
 		return true
 	} else {
@@ -110,14 +107,14 @@ func ReadToMap[K comparable, T any](tx *Tx, info *BucketInfo[K, T], id K, itemsM
 }
 
 // Writes an item to a key. Note: does not write anything if id is the zero value
-func Write[K comparable, T any](tx *Tx, info *BucketInfo[K, T], id K, item *T) {
+func Write[K comparable, T any](tx *Tx, bucketInfo *BucketInfo[K, T], id K, item *T) {
 	var zero K
 	if id == zero {
 		return
 	}
-	bkt := TxRawBucket(tx, info.Name)
-	key := vpack.ToBytes(&id, info.KeyPackFn)
-	data := vpack.ToBytes(item, info.ValuePackFn)
+	bkt := TxRawBucket(tx, bucketInfo.Name)
+	key := vpack.ToBytes(&id, bucketInfo.KeyPackFn)
+	data := vpack.ToBytes(item, bucketInfo.ValuePackFn)
 	RawMustPut(bkt, key, data)
 }
 
@@ -132,154 +129,75 @@ func NextIntId[K, T any](tx *Tx, info *BucketInfo[K, T]) int {
 	return int(RawNextSequence(bkt))
 }
 
-type _IterationDirection uint8
+func _IterateAllCore[K, T any](bkt *BBucket, bucketInfo *BucketInfo[K, T], direction IterationDirection, visitFn func(key K, item T) bool) {
+	var iterParams _RawIterationParams
+	iterParams.Direction = direction
 
-const _IterateRegular = _IterationDirection(0)
-const _IterateReverse = _IterationDirection(1)
-
-func _CursorStartPos(c *Cursor, direction _IterationDirection) (k []byte, v []byte) {
-	if direction == _IterateRegular {
-		return c.First()
-	}
-	if direction == _IterateReverse {
-		return c.Last()
-	}
-	return
+	_RawIterateCore(bkt, iterParams, func(key []byte, value []byte) bool {
+		var itemKey K
+		var item T
+		vpack.FromBytesInto(key, &itemKey, bucketInfo.KeyPackFn)
+		vpack.FromBytesInto(value, &item, bucketInfo.ValuePackFn)
+		return visitFn(itemKey, item)
+	})
 }
 
-func _CursorStartPosForPrefix(c *Cursor, prefix []byte, direction _IterationDirection) (k []byte, v []byte) {
-	if len(prefix) == 0 {
-		return _CursorStartPos(c, direction)
-	}
-	if direction == _IterateRegular {
-		return c.Seek(prefix)
-	}
-	if direction == _IterateReverse {
-		// find the last item that could have this prefix
-		next := _NextPrefix(prefix)
-		c.Seek(next)
-		return c.Prev()
-	}
-	return
+func IterateAll[K, T any](tx *Tx, bucketInfo *BucketInfo[K, T], visitFn func(key K, item T) bool) {
+	bkt := TxRawBucket(tx, bucketInfo.Name)
+	_IterateAllCore(bkt, bucketInfo, IterateRegular, visitFn)
 }
 
-func _NextPrefix(b []byte) []byte {
-	// find the index of the last byte that is < 0xff
-	var i = len(b) - 1;
-	for ; i >= 0 && b[i] == 255; i-- {}
-
-	if i >= 0 {
-		next := bytes.Clone(b)
-		next[i] += 1
-		return next
-	} else {
-		return nil
-	}
+func IterateAllReverse[K, T any](tx *Tx, bucketInfo *BucketInfo[K, T], visitFn func(key K, item T) bool) {
+	bkt := TxRawBucket(tx, bucketInfo.Name)
+	_IterateAllCore(bkt, bucketInfo, IterateReverse, visitFn)
 }
 
-func _CursorStep(c *Cursor, direction _IterationDirection) (k []byte, v []byte) {
-	if direction == _IterateRegular {
-		return c.Next()
-	}
-	if direction == _IterateReverse {
-		return c.Prev()
-	}
-	return
-}
-
-// TODO: accept a "start at key" parameter
-func _RawIterateCore(bkt *BBucket, prefix []byte, direction _IterationDirection, visitFn func(key []byte, value []byte) bool) {
-	crsr := bkt.Cursor()
-	key, value := _CursorStartPosForPrefix(crsr, prefix, direction)
-	for key != nil && bytes.HasPrefix(key, prefix) {
-		if !visitFn(key, value) {
-			break
-		}
-		key, value = _CursorStep(crsr, direction)
-	}
-}
-
-func _IterateCore[K, T any](bkt *BBucket, info *BucketInfo[K, T], direction _IterationDirection, visitFn func(key K, item T) bool) {
-	crsr := bkt.Cursor()
-	key, value := _CursorStartPos(crsr, direction)
-	for key != nil {
-		itemKey := vpack.FromBytes(key, info.KeyPackFn)
-		item := vpack.FromBytes(value, info.ValuePackFn)
-
-		if itemKey == nil || item == nil {
-			continue
-		}
-
-		if !visitFn(*itemKey, *item) {
-			break
-		}
-		key, value = _CursorStep(crsr, direction)
-	}
-}
-
-func IterateAll[K, T any](tx *Tx, info *BucketInfo[K, T], visitFn func(key K, item T) bool) {
-	bkt := TxRawBucket(tx, info.Name)
-	_IterateCore(bkt, info, _IterateRegular, visitFn)
-}
-
-func IterateAllReverse[K, T any](tx *Tx, info *BucketInfo[K, T], visitFn func(key K, item T) bool) {
-	bkt := TxRawBucket(tx, info.Name)
-	_IterateCore(bkt, info, _IterateReverse, visitFn)
-}
-
-func IterateInBatches[K, T any](tx *Tx, info *BucketInfo[K, T], batchSize int, visitFn func(items []T) bool) {
+func IterateInBatches[K, T any](tx *Tx, bucketInfo *BucketInfo[K, T], batchSize int, visitFn func(items []T) bool) {
 	list := make([]T, 0, batchSize)
 	var key K
 	var done bool // iterator is done
 	for !done {
 		generic.ShrinkTo(&list, 0)
-		key, done = ScanList(tx, info, key, batchSize, &list)
+		key, done = ScanList(tx, bucketInfo, key, batchSize, &list)
 		if !visitFn(list) {
 			break
 		}
 	}
 }
 
-func ScanList[K, T any](tx *Tx, info *BucketInfo[K, T], startKey K, count int, items *[]T) (nextKey K, done bool) {
-	bkt := TxRawBucket(tx, info.Name)
-	crsr := bkt.Cursor()
-	key, value := crsr.Seek(vpack.ToBytes(&startKey, info.KeyPackFn))
-	for i := 0; i < count; i++ {
-		if key == nil { // end of bucket
-			break
-		}
+func ScanList[K, T any](tx *Tx, bucketInfo *BucketInfo[K, T], startKey K, count int, items *[]T) (nextKey K, done bool) {
+	bkt := TxRawBucket(tx, bucketInfo.Name)
+
+	var iterParams _RawIterationParams
+	iterParams.Prefix = vpack.ToBytes(&startKey, bucketInfo.KeyPackFn)
+	iterParams.Direction = IterateRegular
+	iterParams.Limit = count
+
+	nextKeyBytes := _RawIterateCore(bkt, iterParams, func(key []byte, value []byte) bool {
 		var item T
-		if vpack.FromBytesInto(value, &item, info.ValuePackFn) {
-			generic.Append(items, item)
-		}
-		key, value = crsr.Next()
-	}
-	done = key == nil
+		vpack.FromBytesInto(value, &item, bucketInfo.ValuePackFn)
+		generic.Append(items, item)
+		return true
+	})
+	done = nextKeyBytes == nil
 	if !done {
-		vpack.FromBytesInto(key, &nextKey, info.KeyPackFn)
+		vpack.FromBytesInto(nextKeyBytes, &nextKey, bucketInfo.KeyPackFn)
 	}
 	return
 }
 
-func IterateBucketFrom[K, T any](tx *Tx, info *BucketInfo[K, T], startKey K, visitFn func(key K, value T) bool) {
-	bkt := TxRawBucket(tx, info.Name)
-	crsr := bkt.Cursor()
-	keyPrefix := vpack.ToBytes(&startKey, info.KeyPackFn)
-	bKey, bValue := crsr.Seek(keyPrefix)
-	for bKey != nil {
-		var key K
-		var value T
-		var cont bool
-		if vpack.FromBytesInto(bValue, &value, info.ValuePackFn) &&
-			vpack.FromBytesInto(bKey, &key, info.KeyPackFn) {
-			cont = visitFn(key, value)
-		} else {
-			// should not happen, but if it did, ignore it and move on
-			cont = true
-		}
-		if !cont {
-			return
-		}
-		bKey, bValue = crsr.Next()
-	}
+// IterateBucketFrom lets you specify the starting key using the userspace key type
+func IterateBucketFrom[K, T any](tx *Tx, bucketInfo *BucketInfo[K, T], startKey K, visitFn func(key K, value T) bool) []byte {
+	bkt := TxRawBucket(tx, bucketInfo.Name)
+
+	var iterParams _RawIterationParams
+	iterParams.Prefix = vpack.ToBytes(&startKey, bucketInfo.KeyPackFn)
+
+	return _RawIterateCore(bkt, iterParams, func(key []byte, value []byte) bool {
+		var itemKey K
+		var item T
+		vpack.FromBytesInto(key, &itemKey, bucketInfo.KeyPackFn)
+		vpack.FromBytesInto(value, &item, bucketInfo.ValuePackFn)
+		return visitFn(itemKey, item)
+	})
 }

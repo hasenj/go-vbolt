@@ -7,6 +7,13 @@ import (
 	"go.hasen.dev/vpack"
 )
 
+// Collections are deprecated.
+// Just use indexes.
+// The original reason I created them was becuase the index did not support
+// traversing backwards and using a cursor for pagination.
+
+// TODO:  migration function that converts a collection to an index
+
 /*
 	Collections are similar to indexes, but with some differences
 
@@ -45,10 +52,10 @@ func Collection[K, O, I any](dbInfo *Info, name string, keyFn vpack.PackFn[K], o
 	generic.Append(&dbInfo.CollectionList, name)
 	generic.EnsureMapNotNil(&dbInfo.Infos)
 	result := &CollectionInfo[K, O, I]{
-		Name:     name,
-		KeyFn: keyFn,
+		Name:    name,
+		KeyFn:   keyFn,
 		OrderFn: orderFn,
-		ItemFn: itemFn,
+		ItemFn:  itemFn,
 	}
 	dbInfo.Infos[name] = result
 	return result
@@ -80,7 +87,7 @@ func _CKeyFull[K, O, I any](info *CollectionInfo[K, O, I], key K, order O, item 
 	return buf.Data
 }
 
-func _CRevKeyValue[K, O, I any](info *CollectionInfo[K, O, I], key K, order O, item I) (bKey []byte, bValue[] byte) {
+func _CRevKeyValue[K, O, I any](info *CollectionInfo[K, O, I], key K, order O, item I) (bKey []byte, bValue []byte) {
 	buf := vpack.NewWriter()
 	buf.WriteBytes(CItemPrefix)
 	info.ItemFn(&item, buf)
@@ -107,21 +114,28 @@ func _ReadKeyOrderItem[K, O, I any](info *CollectionInfo[K, O, I], bKey []byte) 
 }
 
 // TODO: take a "start at" param
-func _IterateCollectionCore[K, O, I any](tx *Tx, info *CollectionInfo[K, O, I], key K, direction _IterationDirection, visit func(key K, order O, item I) bool) {
+func _IterateCollectionCore[K, O, I any](tx *Tx, info *CollectionInfo[K, O, I], key K, direction IterationDirection, visit func(key K, order O, item I) bool) {
 	prefix := _CKeyPrefix(info, key)
 
-	_RawIterateCore(TxRawBucket(tx, info.Name), prefix, direction, func(bKey []byte, bValue []byte) bool {
+	window := _RawIterationParams{
+		Prefix: prefix,
+		Window: Window{
+			Direction: direction,
+		},
+	}
+
+	_RawIterateCore(TxRawBucket(tx, info.Name), window, func(bKey []byte, bValue []byte) bool {
 		key, order, item := _ReadKeyOrderItem(info, bKey)
 		return visit(key, order, item)
 	})
 }
 
 func IterateCollection[K, O, I any](tx *Tx, info *CollectionInfo[K, O, I], key K, visit func(key K, order O, item I) bool) {
-	_IterateCollectionCore(tx, info, key, _IterateRegular, visit)
+	_IterateCollectionCore(tx, info, key, IterateRegular, visit)
 }
 
 func IterateCollectionReverse[K, O, I any](tx *Tx, info *CollectionInfo[K, O, I], key K, visit func(key K, order O, item I) bool) {
-	_IterateCollectionCore(tx, info, key, _IterateReverse, visit)
+	_IterateCollectionCore(tx, info, key, IterateReverse, visit)
 }
 
 func ReadCollection[K, O, I any](tx *Tx, info *CollectionInfo[K, O, I], key K, items *[]I, count int) {
@@ -220,4 +234,3 @@ func CollectionRemoveEntry[K, O, I any](tx *Tx, info *CollectionInfo[K, O, I], k
 	bkt.Delete(iKey)
 	_IncCount(tx, info, key, -1)
 }
-
