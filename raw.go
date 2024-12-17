@@ -130,13 +130,12 @@ func _RawIterateCore(bkt *BBucket, window _RawIterationParams, visitFn func(key 
 
 	// returns the next key that should be visited to continue the iteration
 	var nextKey []byte
-	if key == nil {
-		nextKey = nil
-	} else if bytes.HasPrefix(key, window.Prefix) {
+	if key != nil {
 		nextKey, _ = _CursorStep(crsr, window.Direction)
-	} else {
-		// key is not nil but it's outside the range specified by the search window
+	}
+	if !bytes.HasPrefix(nextKey, window.Prefix) {
 		nextKey = nil
 	}
+
 	return nextKey
 }

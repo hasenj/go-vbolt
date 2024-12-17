@@ -62,3 +62,13 @@ func RunProcess(label string, processFn func()) {
 	processFn()
 	log.Printf("%s :: END    [%s]", label, time.Since(startTime))
 }
+
+func InitBuckets(db *DB, infos ...*Info) {
+	WithWriteTx(db, func(tx *Tx) {
+		EnsureBuckets(tx, &dbInfo)
+		for _, info := range infos {
+			EnsureBuckets(tx, info)
+		}
+		tx.Commit()
+	})
+}
