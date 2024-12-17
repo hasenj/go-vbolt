@@ -169,7 +169,8 @@ func ScanList[K, T any](tx *Tx, bucketInfo *BucketInfo[K, T], startKey K, count 
 	bkt := TxRawBucket(tx, bucketInfo.Name)
 
 	var iterParams _RawIterationParams
-	iterParams.Prefix = vpack.ToBytes(&startKey, bucketInfo.KeyPackFn)
+	iterParams.Prefix = []byte{}
+	iterParams.Cursor = vpack.ToBytes(&startKey, bucketInfo.KeyPackFn)
 	iterParams.Direction = IterateRegular
 	iterParams.Limit = count
 

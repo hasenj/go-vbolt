@@ -2,12 +2,13 @@ package vbolt
 
 import (
 	"fmt"
+	"log"
 	"reflect"
+	"strings"
 
 	"go.hasen.dev/generic"
 	"go.hasen.dev/vpack"
 )
-
 
 type GenericItem struct {
 	Key   any
@@ -86,9 +87,13 @@ func DEBUGInspect[K, V any](tx *Tx, bucket *BucketInfo[K, V]) {
 	inspection.BucketInfoPtr = bucket
 	inspection.Limit = 1000
 	GenericRead(tx, &inspection)
+	var b strings.Builder
+	b.WriteString(bucket.Name + ":\n")
 	for _, item := range inspection.Items {
-		fmt.Println(generic.JSONify(item.Key, ""))
-		fmt.Println(generic.JSONify(item.Value, ""))
+		fmt.Fprint(&b, generic.JSONify(item.Key, ""))
+		fmt.Fprint(&b, "=>  ")
+		fmt.Fprint(&b, generic.JSONify(item.Value, ""))
 	}
-	fmt.Println("Total Count:", inspection.TotalItemsCount)
+	fmt.Fprint(&b, "Total Count:", inspection.TotalItemsCount)
+	log.Println(b.String())
 }
