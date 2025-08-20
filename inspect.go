@@ -55,7 +55,6 @@ func GenericRead(tx *Tx, inspection *Inspection) {
 	inspection.NextKey = reflectUnpack(keyFn, k)
 
 	inspection.TotalItemsCount = bkt.Stats().KeyN
-	return
 }
 
 func reflectPack(serFn reflect.Value, data any) []byte {
@@ -80,6 +79,28 @@ func reflectUnpack(serFn reflect.Value, data []byte) any {
 		})
 	}
 	return obj.Interface()
+}
+
+type InspectionBucketMetadata struct {
+	Name        string
+	KeyPackFn   reflect.Value
+	ValuePackFn reflect.Value
+
+	KeyType   reflect.Type
+	ValueType reflect.Type
+}
+
+func InspectAnyBucketInfo(bucketInfo any) (meta InspectionBucketMetadata) {
+	bucketInfoValue := reflect.ValueOf(bucketInfo).Elem()
+
+	meta.Name = bucketInfoValue.FieldByName("Name").String()
+	meta.KeyPackFn = bucketInfoValue.FieldByName("KeyPackFn")
+	meta.ValuePackFn = bucketInfoValue.FieldByName("ValuePackFn")
+
+	meta.KeyType = meta.KeyPackFn.Type().In(0).Elem()
+	meta.ValueType = meta.ValuePackFn.Type().In(0).Elem()
+
+	return meta
 }
 
 func DEBUGInspect[K, V any](tx *Tx, bucket *BucketInfo[K, V]) {

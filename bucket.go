@@ -202,3 +202,20 @@ func IterateBucketFrom[K, T any](tx *Tx, bucketInfo *BucketInfo[K, T], startKey 
 		return visitFn(itemKey, item)
 	})
 }
+
+// IterateBucketFromPartial lets you specify the starting key using the userspace key type
+// and lets you fill it partially
+func IterateBucketFromPartial[K, T any](tx *Tx, bucketInfo *BucketInfo[K, T], startKey K, visitFn func(key K, value T) bool) []byte {
+	bkt := TxRawBucket(tx, bucketInfo.Name)
+
+	var iterParams _RawIterationParams
+	iterParams.Prefix = _PartialPrefix(vpack.ToBytes(&startKey, bucketInfo.KeyPackFn))
+
+	return _RawIterateCore(bkt, iterParams, func(key []byte, value []byte) bool {
+		var itemKey K
+		var item T
+		vpack.FromBytesInto(key, &itemKey, bucketInfo.KeyPackFn)
+		vpack.FromBytesInto(value, &item, bucketInfo.ValuePackFn)
+		return visitFn(itemKey, item)
+	})
+}

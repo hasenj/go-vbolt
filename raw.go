@@ -81,6 +81,15 @@ func _NextPrefix(b []byte) []byte {
 	}
 }
 
+// removes the trailing zeros
+func _PartialPrefix(b []byte) []byte {
+	end := len(b)
+	for end > 0 && b[end-1] == 0 {
+		end--
+	}
+	return b[:end]
+}
+
 func _CursorStep(c *Cursor, direction IterationDirection) (k []byte, v []byte) {
 	if direction == IterateRegular {
 		return c.Next()
